@@ -68,7 +68,7 @@ func TestExpressionsHandler_WrongMethod(t *testing.T) {
 	handler := http.HandlerFunc(handlers.ExpressionsHandler)
 	handler.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusUnprocessableEntity {
-		t.Errorf("Ожидался 422, но получен %d", rr.Code)
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("Ожидался 500, но получен %d", rr.Code)
 	}
 }
