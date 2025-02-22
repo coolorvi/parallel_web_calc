@@ -10,9 +10,10 @@ import (
 
 func Start() {
 	r := mux.NewRouter()
-	r.HandleFunc("/api/vi/calculate", handlers.CalculateHandler).Methods("Post")
-	http.HandleFunc("/api/v1/expressions", handlers.ExpressionsHandler)
-	http.HandleFunc("/api/v1/expressions/", handlers.ExpressionHandler)
+	r.HandleFunc("/api/v1/calculate", handlers.CalculateHandler).Methods("POST")
+	r.HandleFunc("/api/v1/expressions", handlers.ExpressionsHandler).Methods("GET")
+	r.HandleFunc("/api/v1/expressions/{id}", handlers.ExpressionHandler).Methods("GET")
+	r.HandleFunc("/internal/task", handlers.TaskHandler).Methods("GET", "POST")
 
 	log.Println("Server started on :8080")
 	log.Fatal(http.ListenAndServe(":8080", r))

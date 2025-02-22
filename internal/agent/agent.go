@@ -24,8 +24,8 @@ type Result struct {
 	Result float64 `json:"result"`
 }
 
-func getTask() (*Task, error) {
-	resp, err := http.Get("http://localhost/internal/task")
+func GetTask() (*Task, error) {
+	resp, err := http.Get("http://localhost:8080/internal/task")
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +42,7 @@ func getTask() (*Task, error) {
 	return &task, nil
 }
 
-func compute(task *Task) float64 {
+func Compute(task *Task) float64 {
 	time.Sleep(time.Duration(task.OperationTime) * time.Millisecond)
 	switch task.Operation {
 	case "+":
@@ -61,13 +61,13 @@ func compute(task *Task) float64 {
 	}
 }
 
-func sendResult(result Result) error {
+func SendResult(result Result) error {
 	data, err := json.Marshal(result)
 	if err != nil {
 		return err
 	}
 
-	resp, err := http.Post("http://localhost/internal/task", "application/json", bytes.NewReader(data))
+	resp, err := http.Post("http://localhost:8080/internal/task", "application/json", bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
@@ -79,16 +79,16 @@ func sendResult(result Result) error {
 	return nil
 }
 
-func worker(wg *sync.WaitGroup) {
+func Worker(wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {
-		task, err := getTask()
+		task, err := GetTask()
 		if err != nil {
 			continue
 		}
 
-		result := compute(task)
-		sendResult(Result{ID: task.ID, Result: result})
+		result := Compute(task)
+		SendResult(Result{ID: task.ID, Result: result})
 	}
 }
 
@@ -101,7 +101,7 @@ func StartAgent() {
 	var wg sync.WaitGroup
 	for i := 0; i < computingPower; i++ {
 		wg.Add(1)
-		go worker(&wg)
+		go Worker(&wg)
 	}
 	wg.Wait()
 }
