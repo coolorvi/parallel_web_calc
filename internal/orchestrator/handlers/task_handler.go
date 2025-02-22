@@ -13,25 +13,49 @@ type Task struct {
 	OperationTime int     `json:"operation_time"`
 }
 
-var taskQueue = []Task{
-	{ID: "1", Arg1: 10, Arg2: 5, Operation: "+", OperationTime: 100},
+type Result struct {
+	ID     string  `json:"id"`
+	Result float64 `json:"result"`
 }
+
+var (
+	tasks   = make(map[string]*Task)
+	results = make(map[string]float64)
+)
 
 func TaskHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		if len(taskQueue) == 0 {
-			http.Error(w, "no tasks available", http.StatusNotFound)
+		mutex.Lock()
+		defer mutex.Unlock()
+		for _, task := range tasks {
+			json.NewEncoder(w).Encode(task)
 			return
 		}
-		task := taskQueue[0]
-		taskQueue = taskQueue[1:]
-		json.NewEncoder(w).Encode(task)
-	} else if r.Method == http.MethodPost {
-		var result map[string]interface{}
-		if err := json.NewDecoder(r.Body).Decode(&result); err != nil {
-			http.Error(w, "invalid request", http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
+		http.Error(w, "no tasks available", http.StatusNotFound)
+		return
 	}
+	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+}
+
+func TaskResultHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var res Result
+	if err := json.NewDecoder(r.Body).Decode(&res); err != nil {
+		http.Error(w, "invalid data", http.StatusUnprocessableEntity)
+		return
+	}
+
+	mutex.Lock()
+	defer mutex.Unlock()
+	if _, exists := tasks[res.ID]; !exists {
+		http.Error(w, "task not found", http.StatusNotFound)
+		return
+	}
+
+	results[res.ID] = res.Result
+	w.WriteHeader(http.StatusOK)
 }
