@@ -3,7 +3,7 @@ package tests
 import (
 	"testing"
 
-	parser "github.com/coolorvi/parallel_web_calc/internal/orchestrator"
+	"github.com/coolorvi/parallel_web_calc/internal/orchestrator/parser"
 )
 
 func TestParseExpression(t *testing.T) {
