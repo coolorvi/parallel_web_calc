@@ -5,21 +5,20 @@ import (
 	"net/http"
 )
 
-var Expressions = make(map[string]*Expression)
-
 func ExpressionsHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	if len(Expressions) == 0 {
+		http.Error(w, "No expressions found", http.StatusNotFound)
 		return
 	}
 
-	response := map[string][]Expression{"expressions": {}}
+	exprList := make([]*Expression, 0, len(Expressions))
 	for _, expr := range Expressions {
-		response["expressions"] = append(response["expressions"], *expr)
+		exprList = append(exprList, expr)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-	}
+	json.NewEncoder(w).Encode(exprList)
 }

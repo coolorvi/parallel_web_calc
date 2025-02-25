@@ -6,19 +6,6 @@ import (
 	"sync"
 )
 
-type Task struct {
-	ID            string  `json:"id"`
-	Arg1          float64 `json:"arg1"`
-	Arg2          float64 `json:"arg2"`
-	Operation     string  `json:"operation"`
-	OperationTime int     `json:"operation_time"`
-}
-
-type Result struct {
-	ID     string  `json:"id"`
-	Result float64 `json:"result"`
-}
-
 func NewTaskHandler(tasks map[string]*Task) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
