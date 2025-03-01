@@ -3,21 +3,16 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
+
+	"github.com/gorilla/mux"
 )
 
 func ExpressionHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
+	mutex.Lock()
+	defer mutex.Unlock()
 
-	parts := strings.Split(r.URL.Path, "/")
-	if len(parts) < 5 {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	id := parts[4]
+	vars := mux.Vars(r)
+	id := vars["id"]
 
 	expr, exists := Expressions[id]
 	if !exists {
@@ -25,14 +20,18 @@ func ExpressionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if expr == nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
+	response := map[string]interface{}{
+		"id":     expr.ID,
+		"status": expr.Status,
 	}
 
-	response := map[string]*Expression{"expression": expr}
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	if expr.Result != nil {
+		response["result"] = *expr.Result
 	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"expression": response,
+	})
 }

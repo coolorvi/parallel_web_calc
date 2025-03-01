@@ -12,9 +12,10 @@ import (
 
 func TestTaskHandler(t *testing.T) {
 	tasks := make(map[string]*handlers.Task)
+	mutex := &sync.Mutex{}
 	tasks["1"] = &handlers.Task{ID: "1", Arg1: 1, Arg2: 2, Operation: "+", OperationTime: 100}
 
-	handler := handlers.NewTaskHandler(tasks) // Используем конструктор хэндлера
+	handler := handlers.NewTaskHandler(tasks, mutex)
 
 	r := httptest.NewRequest(http.MethodGet, "/internal/task", nil)
 	w := httptest.NewRecorder()
@@ -28,8 +29,9 @@ func TestTaskHandler(t *testing.T) {
 
 func TestTaskHandler_NoTask(t *testing.T) {
 	tasks := make(map[string]*handlers.Task)
+	mutex := &sync.Mutex{}
 
-	handler := handlers.NewTaskHandler(tasks)
+	handler := handlers.NewTaskHandler(tasks, mutex)
 
 	r := httptest.NewRequest(http.MethodGet, "/internal/task", nil)
 	w := httptest.NewRecorder()

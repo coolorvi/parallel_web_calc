@@ -3,47 +3,27 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"sync"
 )
 
-func NewTaskHandler(tasks map[string]*Task) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
-			return
-		}
-
-		for _, task := range tasks {
-			json.NewEncoder(w).Encode(task)
-			return
-		}
-
-		http.Error(w, "no tasks available", http.StatusNotFound)
+func GetTaskHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		return
 	}
-}
 
-func NewTaskResultHandler(tasks map[string]*Task, results map[string]float64, mutex *sync.Mutex) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	for _, task := range Tasks {
+		resp := map[string]*Task{"task": task}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
-
-		var result Result
-		if err := json.NewDecoder(r.Body).Decode(&result); err != nil {
-			http.Error(w, "Invalid request body", http.StatusUnprocessableEntity)
-			return
-		}
-
-		mutex.Lock()
-		defer mutex.Unlock()
-
-		if _, exists := tasks[result.ID]; !exists {
-			http.Error(w, "Task not found", http.StatusNotFound)
-			return
-		}
-
-		results[result.ID] = result.Result
-		w.WriteHeader(http.StatusOK)
+		delete(Tasks, task.ID)
+		return
 	}
+
+	http.Error(w, "No tasks available", http.StatusNotFound)
 }

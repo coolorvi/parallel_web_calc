@@ -9,16 +9,23 @@ func ExpressionsHandler(w http.ResponseWriter, r *http.Request) {
 	mutex.Lock()
 	defer mutex.Unlock()
 
-	if len(Expressions) == 0 {
-		http.Error(w, "No expressions found", http.StatusNotFound)
-		return
-	}
-
-	exprList := make([]*Expression, 0, len(Expressions))
+	var expressionsList []map[string]interface{}
 	for _, expr := range Expressions {
-		exprList = append(exprList, expr)
+		exprData := map[string]interface{}{
+			"id":     expr.ID,
+			"status": expr.Status,
+		}
+
+		if expr.Result != nil {
+			exprData["result"] = *expr.Result
+		}
+
+		expressionsList = append(expressionsList, exprData)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(exprList)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"expressions": expressionsList,
+	})
 }

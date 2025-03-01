@@ -2,10 +2,13 @@ package handlers
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 
-	orchestrator "github.com/coolorvi/parallel_web_calc/internal/parser"
 	"github.com/google/uuid"
 )
 
@@ -24,6 +27,7 @@ type Result struct {
 
 type Task struct {
 	ID            string  `json:"id"`
+	ExpressionID  string  `json:"expression_id"`
 	Arg1          float64 `json:"arg1"`
 	Arg2          float64 `json:"arg2"`
 	Operation     string  `json:"operation"`
@@ -31,10 +35,11 @@ type Task struct {
 }
 
 type Expression struct {
-	ID     string   `json:"id"`
-	Status string   `json:"status"`
-	Result *float64 `json:"result,omitempty"`
-	Tasks  []string `json:"tasks"`
+	ID          string             `json:"id"`
+	Status      string             `json:"status"`
+	Result      *float64           `json:"result,omitempty"`
+	Tasks       []string           `json:"tasks"`
+	TaskResults map[string]float64 `json:"task_results"`
 }
 
 var (
@@ -45,55 +50,60 @@ var (
 
 func CalculateHandler(w http.ResponseWriter, r *http.Request) {
 	var req CalcRequest
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Expression == "" {
-		http.Error(w, "Invalid request body", http.StatusUnprocessableEntity)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusUnprocessableEntity)
 		return
 	}
 
-	parsed, err := orchestrator.ParseExpression([]byte(`{"expression": "` + req.Expression + `"}`))
+	expr := strings.TrimSpace(req.Expression)
+	if expr == "" {
+		http.Error(w, "Expression not valid", http.StatusUnprocessableEntity)
+		return
+	}
+
+	node, err := parser.ParseExpr(expr)
 	if err != nil {
-		http.Error(w, "Failed to parse expression", http.StatusUnprocessableEntity)
+		http.Error(w, "Fail to parse", http.StatusInternalServerError)
 		return
 	}
 
-	var output orchestrator.OutputJSON
-	if err := json.Unmarshal(parsed, &output); err != nil {
-		http.Error(w, "Failed to process parsed expression", http.StatusInternalServerError)
-		return
-	}
+	switch v := node.(type) {
+	case *ast.BinaryExpr:
+		arg1 := extractValue(v.X)
+		arg2 := extractValue(v.Y)
+		taskId := uuid.New().String()
 
-	exprID := uuid.New().String()
-	var taskIDs []string
-
-	mutex.Lock()
-	for _, expr := range output.SubExpressions {
-		taskID := uuid.New().String()
-
-		Tasks[taskID] = &Task{
-			ID:            taskID,
-			Arg1:          atof(expr.LeftOperand),
-			Arg2:          atof(expr.RightOperand),
-			Operation:     expr.Operator,
-			OperationTime: 100,
+		task := &Task{
+			ID:        taskId,
+			Arg1:      arg1,
+			Arg2:      arg2,
+			Operation: v.Op.String(),
 		}
-		taskIDs = append(taskIDs, taskID)
+
+		mutex.Lock()
+		defer mutex.Unlock()
+		Tasks[taskId] = task
 	}
 
-	Expressions[exprID] = &Expression{
-		ID:     exprID,
-		Status: "pending",
-		Tasks:  taskIDs,
-	}
-	mutex.Unlock()
+	id := uuid.New().String()
 
+	Expressions[id] = &Expression{
+		ID:          id,
+		Status:      "in_progress",
+		Tasks:       []string{},
+		TaskResults: make(map[string]float64),
+	}
+
+	response := CalcResponse{ID: id}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(CalcResponse{ID: exprID})
+	json.NewEncoder(w).Encode(response)
 }
 
-func atof(s string) float64 {
-	var f float64
-	json.Unmarshal([]byte(s), &f)
-	return f
+func extractValue(n ast.Expr) float64 {
+	if lit, ok := n.(*ast.BasicLit); ok {
+		val, _ := strconv.ParseFloat(lit.Value, 64)
+		return val
+	}
+	return 0
 }

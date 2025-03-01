@@ -1,22 +1,31 @@
-package agent
+package main
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
+	"math/big"
 	"net/http"
-	"os"
-	"strconv"
 	"sync"
 	"time"
+
+	"go/constant"
+	"go/token"
+)
+
+const (
+	TASK_URL        = "http://localhost/internal/task"
+	RESULT_URL      = "http://localhost/internal/task"
+	COMPUTING_POWER = 3
 )
 
 type Task struct {
-	ID            string  `json:"id"`
-	Arg1          float64 `json:"arg1"`
-	Arg2          float64 `json:"arg2"`
-	Operation     string  `json:"operation"`
-	OperationTime int     `json:"operation_time"`
+	ID            string `json:"id"`
+	Arg1          string `json:"arg1"`
+	Arg2          string `json:"arg2"`
+	Operation     string `json:"operation"`
+	OperationTime int    `json:"operation_time"`
 }
 
 type Result struct {
@@ -24,84 +33,121 @@ type Result struct {
 	Result float64 `json:"result"`
 }
 
-func GetTask() (*Task, error) {
-	resp, err := http.Get("http://localhost:8080/internal/task")
+func fetchTask() (*Task, error) {
+	resp, err := http.Get(TASK_URL)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	var task Task
+	var task struct {
+		Task Task `json:"task"`
+	}
 	if err := json.NewDecoder(resp.Body).Decode(&task); err != nil {
 		return nil, err
 	}
-	return &task, nil
+
+	return &task.Task, nil
 }
 
-func Compute(task *Task) float64 {
-	time.Sleep(time.Duration(task.OperationTime) * time.Millisecond)
-	switch task.Operation {
-	case "+":
-		return task.Arg1 + task.Arg2
-	case "-":
-		return task.Arg1 - task.Arg2
-	case "*":
-		return task.Arg1 * task.Arg2
-	case "/":
-		if task.Arg2 == 0 {
-			return 0
-		}
-		return task.Arg1 / task.Arg2
-	default:
-		return 0
-	}
-}
-
-func SendResult(result Result) error {
+func sendResult(result Result) error {
 	data, err := json.Marshal(result)
 	if err != nil {
 		return err
 	}
 
-	resp, err := http.Post("http://localhost:8080/internal/task", "application/json", bytes.NewReader(data))
+	resp, err := http.Post(RESULT_URL, "application/json", bytes.NewBuffer(data))
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		return fmt.Errorf("failed to send result, status code: %d", resp.StatusCode)
 	}
+
 	return nil
 }
 
-func Worker(wg *sync.WaitGroup) {
+func computeTask(task *Task) (float64, error) {
+	var x, y constant.Value
+
+	x = constant.MakeFromLiteral(task.Arg1, token.FLOAT, 0)
+	y = constant.MakeFromLiteral(task.Arg2, token.FLOAT, 0)
+
+	if x.Kind() == constant.Unknown || y.Kind() == constant.Unknown {
+		return 0, fmt.Errorf("invalid operands")
+	}
+
+	var result constant.Value
+	switch task.Operation {
+	case "+":
+		result = constant.BinaryOp(x, token.ADD, y)
+	case "-":
+		result = constant.BinaryOp(x, token.SUB, y)
+	case "*":
+		result = constant.BinaryOp(x, token.MUL, y)
+	case "/":
+		if constant.Sign(y) == 0 {
+			return 0, fmt.Errorf("division by zero")
+		}
+		result = constant.BinaryOp(x, token.QUO, y)
+	default:
+		return 0, fmt.Errorf("unsupported operation: %s", task.Operation)
+	}
+
+	f, _ := new(big.Float).SetString(result.ExactString())
+	res, _ := f.Float64()
+	return res, nil
+}
+
+func worker(id int, jobs <-chan *Task, wg *sync.WaitGroup) {
 	defer wg.Done()
-	for {
-		task, err := GetTask()
+	for task := range jobs {
+		fmt.Printf("Worker %d processing task %s\n", id, task.ID)
+		time.Sleep(time.Duration(task.OperationTime) * time.Millisecond)
+
+		result, err := computeTask(task)
 		if err != nil {
+			log.Printf("Worker %d failed to compute task %s: %v", id, task.ID, err)
 			continue
 		}
 
-		result := Compute(task)
-		SendResult(Result{ID: task.ID, Result: result})
+		if err := sendResult(Result{ID: task.ID, Result: result}); err != nil {
+			log.Printf("Worker %d failed to send result for task %s: %v", id, task.ID, err)
+		}
 	}
 }
 
-func StartAgent() {
-	computingPower, _ := strconv.Atoi(os.Getenv("COMPUTING_POWER"))
-	if computingPower <= 0 {
-		computingPower = 1
+func StartWorker() {
+	jobs := make(chan *Task, 100)
+	var wg sync.WaitGroup
+
+	for w := 1; w <= COMPUTING_POWER; w++ {
+		wg.Add(1)
+		go worker(w, jobs, &wg)
 	}
 
-	var wg sync.WaitGroup
-	for i := 0; i < computingPower; i++ {
-		wg.Add(1)
-		go Worker(&wg)
+	for {
+		task, err := fetchTask()
+		if err != nil {
+			log.Printf("Error fetching task: %v", err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		if task == nil {
+			log.Println("No tasks available, retrying...")
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		jobs <- task
 	}
-	wg.Wait()
 }
