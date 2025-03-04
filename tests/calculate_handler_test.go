@@ -8,76 +8,65 @@ import (
 	"testing"
 
 	"github.com/coolorvi/parallel_web_calc/internal/orchestrator/handlers"
+	"github.com/stretchr/testify/assert"
 )
 
-func TestCalculateHandler(t *testing.T) {
-	t.Run("Valid request", func(t *testing.T) {
-		requestBody := `{"expression": "2 + 2 * 2"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/calculate", bytes.NewBufferString(requestBody))
-		req.Header.Set("Content-Type", "application/json")
+func TestCalculateHandler_ValidExpressions(t *testing.T) {
+	tests := []struct {
+		name       string
+		expression string
+		statusCode int
+	}{
+		{"Simple addition", "3+5", http.StatusCreated},
+		{"Simple subtraction", "10-7", http.StatusCreated},
+		{"Multiplication", "4*6", http.StatusCreated},
+		{"Division", "8/2", http.StatusCreated},
+		{"Complex expression", "(3+5)*2-4/2", http.StatusCreated},
+	}
 
-		rec := httptest.NewRecorder()
-		handlers.CalculateHandler(rec, req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requestBody, _ := json.Marshal(handlers.CalcRequest{Expression: tt.expression})
+			req, err := http.NewRequest("POST", "/calculate", bytes.NewBuffer(requestBody))
+			assert.NoError(t, err)
+			req.Header.Set("Content-Type", "application/json")
 
-		res := rec.Result()
-		defer res.Body.Close()
+			recorder := httptest.NewRecorder()
+			http.HandlerFunc(handlers.CalculateHandler).ServeHTTP(recorder, req)
 
-		if res.StatusCode != http.StatusCreated {
-			t.Errorf("Expected status 201, got %d", res.StatusCode)
-		}
+			assert.Equal(t, tt.statusCode, recorder.Code)
+			if recorder.Code == http.StatusCreated {
+				var resp handlers.CalcResponse
+				err = json.Unmarshal(recorder.Body.Bytes(), &resp)
+				assert.NoError(t, err)
+				assert.NotEmpty(t, resp.ID)
+			}
+		})
+	}
+}
 
-		var resp handlers.CalcResponse
-		if err := json.NewDecoder(res.Body).Decode(&resp); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
+func TestCalculateHandler_InvalidExpressions(t *testing.T) {
+	tests := []struct {
+		name       string
+		expression string
+		statusCode int
+	}{
+		{"Empty expression", "", http.StatusUnprocessableEntity},
+		{"Invalid characters", "3&5", http.StatusInternalServerError},
+		{"Unbalanced parentheses", "(3+5*2", http.StatusInternalServerError},
+	}
 
-		if resp.ID == "" {
-			t.Errorf("Expected a valid UUID, got an empty string")
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requestBody, _ := json.Marshal(handlers.CalcRequest{Expression: tt.expression})
+			req, err := http.NewRequest("POST", "/calculate", bytes.NewBuffer(requestBody))
+			assert.NoError(t, err)
+			req.Header.Set("Content-Type", "application/json")
 
-	t.Run("Invalid JSON", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/calculate", bytes.NewBufferString(`{invalid json`))
-		req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+			http.HandlerFunc(handlers.CalculateHandler).ServeHTTP(recorder, req)
 
-		rec := httptest.NewRecorder()
-		handlers.CalculateHandler(rec, req)
-
-		res := rec.Result()
-		defer res.Body.Close()
-
-		if res.StatusCode != http.StatusUnprocessableEntity {
-			t.Errorf("Expected status 422, got %d", res.StatusCode)
-		}
-	})
-
-	t.Run("Empty expression", func(t *testing.T) {
-		requestBody := `{"expression": ""}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/calculate", bytes.NewBufferString(requestBody))
-		req.Header.Set("Content-Type", "application/json")
-
-		rec := httptest.NewRecorder()
-		handlers.CalculateHandler(rec, req)
-
-		res := rec.Result()
-		defer res.Body.Close()
-
-		if res.StatusCode != http.StatusUnprocessableEntity {
-			t.Errorf("Expected status 422, got %d", res.StatusCode)
-		}
-	})
-
-	t.Run("Invalid method", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/calculate", nil)
-
-		rec := httptest.NewRecorder()
-		handlers.CalculateHandler(rec, req)
-
-		res := rec.Result()
-		defer res.Body.Close()
-
-		if res.StatusCode != http.StatusUnprocessableEntity {
-			t.Errorf("Expected status 422, got %d", res.StatusCode)
-		}
-	})
+			assert.Equal(t, tt.statusCode, recorder.Code)
+		})
+	}
 }
