@@ -6,6 +6,6 @@ import (
 )
 
 func main() {
-	orchestrator.Start()
 	agent.StartWorker()
+	orchestrator.Start()
 }

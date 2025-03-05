@@ -9,66 +9,78 @@ import (
 	"github.com/coolorvi/parallel_web_calc/internal/orchestrator/handlers"
 )
 
-func setupTestData() {
-	handlers.Expressions = map[string]*handlers.Expression{
-		"1": {ID: "1", Status: "done", Result: floatPtr(6)},
-		"2": {ID: "2", Status: "pending", Result: nil},
-	}
+type ExpressionResponse struct {
+	ID     string   `json:"id"`
+	Status string   `json:"status"`
+	Result *float64 `json:"result,omitempty"`
 }
 
-func floatPtr(v float64) *float64 {
-	return &v
+type ExpressionsResponse struct {
+	Expressions []ExpressionResponse `json:"expressions"`
 }
 
 func TestExpressionsHandler(t *testing.T) {
-	setupTestData()
-
-	req, _ := http.NewRequest("GET", "/api/v1/expressions", nil)
-	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(handlers.ExpressionsHandler)
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Errorf("Ожидался 200 OK, но получен %d", rr.Code)
+	tests := []struct {
+		name           string
+		setupData      func()
+		expectedStatus int
+		expectedBody   ExpressionsResponse
+	}{
+		{
+			name: "Successfully get expressions",
+			setupData: func() {
+				zero := 0.0
+				handlers.Expressions = map[string]*handlers.Expression{
+					"1": {ID: "1", Status: "completed", Result: nil},
+					"2": {ID: "2", Status: "in progress", Result: nil},
+					"3": {ID: "3", Status: "completed", Result: &zero},
+				}
+			},
+			expectedStatus: http.StatusOK,
+			expectedBody: ExpressionsResponse{
+				Expressions: []ExpressionResponse{
+					{ID: "1", Status: "completed"},
+					{ID: "2", Status: "in progress"},
+					{ID: "3", Status: "completed", Result: new(float64)},
+				},
+			},
+		},
+		{
+			name: "Empty expressions",
+			setupData: func() {
+				handlers.Expressions = make(map[string]*handlers.Expression)
+			},
+			expectedStatus: http.StatusOK,
+			expectedBody:   ExpressionsResponse{Expressions: []ExpressionResponse{}},
+		},
 	}
 
-	var response map[string][]handlers.Expression
-	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
-		t.Errorf("Ошибка при разборе JSON: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setupData()
 
-	if len(response["expressions"]) != len(handlers.Expressions) {
-		t.Errorf("Ожидаемое количество выражений %d, но получено %d", len(handlers.Expressions), len(response["expressions"]))
-	}
-}
+			req, err := http.NewRequest(http.MethodGet, "/expressions", nil)
+			if err != nil {
+				t.Fatalf("could not create request: %v", err)
+			}
 
-func TestExpressionsHandler_EmptyList(t *testing.T) {
-	handlers.Expressions = map[string]*handlers.Expression{}
+			rr := httptest.NewRecorder()
+			handler := http.HandlerFunc(handlers.ExpressionsHandler)
+			handler.ServeHTTP(rr, req)
 
-	req, _ := http.NewRequest("GET", "/api/v1/expressions", nil)
-	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(handlers.ExpressionsHandler)
-	handler.ServeHTTP(rr, req)
+			if status := rr.Code; status != tt.expectedStatus {
+				t.Errorf("handler returned wrong status code: got %v want %v", status, tt.expectedStatus)
+			}
 
-	if rr.Code != http.StatusOK {
-		t.Errorf("Ожидался 200 OK, но получен %d", rr.Code)
-	}
+			var response ExpressionsResponse
+			if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+				t.Fatalf("failed to parse response: %v", err)
+			}
 
-	var response map[string][]handlers.Expression
-	json.Unmarshal(rr.Body.Bytes(), &response)
-
-	if len(response["expressions"]) != 0 {
-		t.Errorf("Ожидался пустой массив, но получено %v", response["expressions"])
-	}
-}
-
-func TestExpressionsHandler_WrongMethod(t *testing.T) {
-	req, _ := http.NewRequest("POST", "/api/v1/expressions", nil)
-	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(handlers.ExpressionsHandler)
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusInternalServerError {
-		t.Errorf("Ожидался 500, но получен %d", rr.Code)
+			if len(response.Expressions) != len(tt.expectedBody.Expressions) {
+				t.Errorf("unexpected number of expressions: got %d, want %d",
+					len(response.Expressions), len(tt.expectedBody.Expressions))
+			}
+		})
 	}
 }

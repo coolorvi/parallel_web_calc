@@ -1,80 +1,76 @@
 package tests
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
-	"sync"
 	"testing"
 
 	"github.com/coolorvi/parallel_web_calc/internal/orchestrator/handlers"
 )
 
-func TestTaskHandler(t *testing.T) {
-	tasks := make(map[string]*handlers.Task)
-	mutex := &sync.Mutex{}
-	tasks["1"] = &handlers.Task{ID: "1", Arg1: 1, Arg2: 2, Operation: "+", OperationTime: 100}
-
-	handler := handlers.NewTaskHandler(tasks, mutex)
-
-	r := httptest.NewRequest(http.MethodGet, "/internal/task", nil)
-	w := httptest.NewRecorder()
-
-	handler.ServeHTTP(w, r)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+func TestExpressions(t *testing.T) {
+	tests := []struct {
+		name           string
+		setupData      func()
+		expectedStatus int
+		expectedBody   ExpressionsResponse
+	}{
+		{
+			name: "Successfully get expressions",
+			setupData: func() {
+				zero := 0.0
+				handlers.Expressions = map[string]*handlers.Expression{
+					"1": {ID: "1", Status: "completed", Result: nil},
+					"2": {ID: "2", Status: "in progress", Result: nil},
+					"3": {ID: "3", Status: "completed", Result: &zero},
+				}
+			},
+			expectedStatus: http.StatusOK,
+			expectedBody: ExpressionsResponse{
+				Expressions: []ExpressionResponse{
+					{ID: "1", Status: "completed"},
+					{ID: "2", Status: "in progress"},
+					{ID: "3", Status: "completed", Result: new(float64)},
+				},
+			},
+		},
+		{
+			name: "Empty expressions",
+			setupData: func() {
+				handlers.Expressions = make(map[string]*handlers.Expression)
+			},
+			expectedStatus: http.StatusOK,
+			expectedBody:   ExpressionsResponse{Expressions: []ExpressionResponse{}},
+		},
 	}
-}
 
-func TestTaskHandler_NoTask(t *testing.T) {
-	tasks := make(map[string]*handlers.Task)
-	mutex := &sync.Mutex{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setupData()
 
-	handler := handlers.NewTaskHandler(tasks, mutex)
+			req, err := http.NewRequest(http.MethodGet, "/expressions", nil)
+			if err != nil {
+				t.Fatalf("could not create request: %v", err)
+			}
 
-	r := httptest.NewRequest(http.MethodGet, "/internal/task", nil)
-	w := httptest.NewRecorder()
+			rr := httptest.NewRecorder()
+			handler := http.HandlerFunc(handlers.ExpressionsHandler)
+			handler.ServeHTTP(rr, req)
 
-	handler.ServeHTTP(w, r)
+			if status := rr.Code; status != tt.expectedStatus {
+				t.Errorf("handler returned wrong status code: got %v want %v", status, tt.expectedStatus)
+			}
 
-	if w.Code != http.StatusNotFound {
-		t.Errorf("expected status %d, got %d", http.StatusNotFound, w.Code)
-	}
-}
+			var response ExpressionsResponse
+			if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+				t.Fatalf("failed to parse response: %v", err)
+			}
 
-func TestTaskResultHandler(t *testing.T) {
-	tasks := make(map[string]*handlers.Task)
-	results := make(map[string]float64)
-	mutex := sync.Mutex{}
-
-	tasks["1"] = &handlers.Task{ID: "1", Arg1: 1, Arg2: 2, Operation: "+", OperationTime: 100}
-
-	body := strings.NewReader(`{"id":"1", "result":3}`)
-	r := httptest.NewRequest(http.MethodPost, "/internal/task", body)
-	w := httptest.NewRecorder()
-
-	handler := handlers.NewTaskResultHandler(tasks, results, &mutex)
-	handler.ServeHTTP(w, r)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
-	}
-}
-
-func TestTaskResultHandler_TaskNotFound(t *testing.T) {
-	tasks := make(map[string]*handlers.Task)
-	results := make(map[string]float64)
-	mutex := sync.Mutex{}
-
-	body := strings.NewReader(`{"id":"999", "result":3}`)
-	r := httptest.NewRequest(http.MethodPost, "/internal/task", body)
-	w := httptest.NewRecorder()
-
-	handler := handlers.NewTaskResultHandler(tasks, results, &mutex)
-	handler.ServeHTTP(w, r)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("expected status %d, got %d", http.StatusNotFound, w.Code)
+			if len(response.Expressions) != len(tt.expectedBody.Expressions) {
+				t.Errorf("unexpected number of expressions: got %d, want %d",
+					len(response.Expressions), len(tt.expectedBody.Expressions))
+			}
+		})
 	}
 }

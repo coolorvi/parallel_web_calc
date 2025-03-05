@@ -62,6 +62,19 @@ func CalculateHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	expressionID := uuid.New().String()
+
+	expression := &Expression{
+		ID:          expressionID,
+		Status:      "in_progress",
+		Tasks:       []string{},
+		TaskResults: make(map[string]float64),
+	}
+
+	mutex.Lock()
+	Expressions[expressionID] = expression
+	mutex.Unlock()
+
 	switch v := node.(type) {
 	case *ast.BinaryExpr:
 		arg1 := extractValue(v.X)
@@ -69,27 +82,21 @@ func CalculateHandler(w http.ResponseWriter, r *http.Request) {
 		taskId := uuid.New().String()
 
 		task := &Task{
-			ID:        taskId,
-			Arg1:      arg1,
-			Arg2:      arg2,
-			Operation: v.Op.String(),
+			ID:           taskId,
+			ExpressionID: expressionID,
+			Arg1:         arg1,
+			Arg2:         arg2,
+			Operation:    v.Op.String(),
 		}
 
 		mutex.Lock()
-		defer mutex.Unlock()
 		Tasks[taskId] = task
+
+		Expressions[expressionID].Tasks = append(Expressions[expressionID].Tasks, taskId)
+		mutex.Unlock()
 	}
 
-	id := uuid.New().String()
-
-	Expressions[id] = &Expression{
-		ID:          id,
-		Status:      "in_progress",
-		Tasks:       []string{},
-		TaskResults: make(map[string]float64),
-	}
-
-	response := CalcResponse{ID: id}
+	response := CalcResponse{ID: expressionID}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(response)

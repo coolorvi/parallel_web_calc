@@ -15,7 +15,7 @@ func ExpressionHandler(w http.ResponseWriter, r *http.Request) {
 	id := vars["id"]
 
 	expr, exists := Expressions[id]
-	if !exists {
+	if !exists || expr == nil {
 		http.Error(w, "Not Found", http.StatusNotFound)
 		return
 	}

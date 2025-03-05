@@ -7,52 +7,74 @@ import (
 	"testing"
 
 	"github.com/coolorvi/parallel_web_calc/internal/orchestrator/handlers"
+	"github.com/google/uuid"
+	"github.com/gorilla/mux"
 )
 
 func TestExpressionHandler_Success(t *testing.T) {
-	setupTestData()
+	exprID := uuid.New().String()
 
-	req, _ := http.NewRequest("GET", "/api/v1/expressions/1", nil)
+	handlers.Expressions = map[string]*handlers.Expression{
+		exprID: {
+			ID:     exprID,
+			Status: "completed",
+			Result: nil,
+		},
+	}
+
+	req, _ := http.NewRequest("GET", "/api/v1/expressions/"+exprID, nil)
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(handlers.ExpressionHandler)
-	handler.ServeHTTP(rr, req)
+
+	r := mux.NewRouter()
+	r.HandleFunc("/api/v1/expressions/{id}", handlers.ExpressionHandler)
+	r.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("Ожидался 200 OK, но получен %d", rr.Code)
 	}
 
-	var response map[string]handlers.Expression
+	var response map[string]map[string]interface{}
 	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
 		t.Errorf("Ошибка при разборе JSON: %v", err)
 	}
 
-	if response["expression"].ID != "1" {
-		t.Errorf("Ожидалось ID '1', но получено '%s'", response["expression"].ID)
+	if response["expression"]["id"] != exprID {
+		t.Errorf("Ожидался ID '%s', но получен '%s'", exprID, response["expression"]["id"])
+	}
+
+	if response["expression"]["status"] != "completed" {
+		t.Errorf("Ожидался статус 'completed', но получен '%s'", response["expression"]["status"])
 	}
 }
 
 func TestExpressionHandler_NotFound(t *testing.T) {
-	setupTestData()
+	nonExistentID := uuid.New().String()
 
-	req, _ := http.NewRequest("GET", "/api/v1/expressions/999", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/expressions/"+nonExistentID, nil)
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(handlers.ExpressionHandler)
-	handler.ServeHTTP(rr, req)
 
+	r := mux.NewRouter()
+	r.HandleFunc("/api/v1/expressions/{id}", handlers.ExpressionHandler)
+	r.ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("Ожидался 404 Not Found, но получен %d", rr.Code)
 	}
 }
 
-func TestExpressionHandler_InternalServerError(t *testing.T) {
-	handlers.Expressions["1"] = nil
+func TestExpression_NotFound(t *testing.T) {
+	exprID := uuid.New().String()
+	handlers.Expressions = map[string]*handlers.Expression{
+		exprID: nil,
+	}
 
-	req, _ := http.NewRequest("GET", "/api/v1/expressions/1", nil)
+	req, _ := http.NewRequest("GET", "/api/v1/expressions/"+exprID, nil)
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(handlers.ExpressionHandler)
-	handler.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusInternalServerError {
-		t.Errorf("Ожидался 500 Internal Server Error, но получен %d", rr.Code)
+	r := mux.NewRouter()
+	r.HandleFunc("/api/v1/expressions/{id}", handlers.ExpressionHandler)
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("Ожидался 404 Not Found, но получен %d", rr.Code)
 	}
 }

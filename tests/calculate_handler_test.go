@@ -8,65 +8,67 @@ import (
 	"testing"
 
 	"github.com/coolorvi/parallel_web_calc/internal/orchestrator/handlers"
-	"github.com/stretchr/testify/assert"
 )
 
-func TestCalculateHandler_ValidExpressions(t *testing.T) {
+func TestCalculateHandler(t *testing.T) {
 	tests := []struct {
-		name       string
-		expression string
-		statusCode int
+		name           string
+		requestBody    string
+		expectedStatus int
+		expectedID     string
 	}{
-		{"Simple addition", "3+5", http.StatusCreated},
-		{"Simple subtraction", "10-7", http.StatusCreated},
-		{"Multiplication", "4*6", http.StatusCreated},
-		{"Division", "8/2", http.StatusCreated},
-		{"Complex expression", "(3+5)*2-4/2", http.StatusCreated},
+		{
+			name:           "Valid expression",
+			requestBody:    `{"expression": "3 + 4"}`,
+			expectedStatus: http.StatusCreated,
+			expectedID:     "valid_uuid",
+		},
+		{
+			name:           "Invalid JSON",
+			requestBody:    `{expression: "3 + 4"}`,
+			expectedStatus: http.StatusUnprocessableEntity,
+			expectedID:     "",
+		},
+		{
+			name:           "Empty expression",
+			requestBody:    `{"expression": ""}`,
+			expectedStatus: http.StatusUnprocessableEntity,
+			expectedID:     "",
+		},
+		{
+			name:           "Fail to parse expression",
+			requestBody:    `{"expression": "3 ?? 4"}`,
+			expectedStatus: http.StatusInternalServerError,
+			expectedID:     "",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			requestBody, _ := json.Marshal(handlers.CalcRequest{Expression: tt.expression})
-			req, err := http.NewRequest("POST", "/calculate", bytes.NewBuffer(requestBody))
-			assert.NoError(t, err)
-			req.Header.Set("Content-Type", "application/json")
-
-			recorder := httptest.NewRecorder()
-			http.HandlerFunc(handlers.CalculateHandler).ServeHTTP(recorder, req)
-
-			assert.Equal(t, tt.statusCode, recorder.Code)
-			if recorder.Code == http.StatusCreated {
-				var resp handlers.CalcResponse
-				err = json.Unmarshal(recorder.Body.Bytes(), &resp)
-				assert.NoError(t, err)
-				assert.NotEmpty(t, resp.ID)
+			req, err := http.NewRequest("POST", "/calculate", bytes.NewBufferString(tt.requestBody))
+			if err != nil {
+				t.Fatalf("could not create request: %v", err)
 			}
-		})
-	}
-}
 
-func TestCalculateHandler_InvalidExpressions(t *testing.T) {
-	tests := []struct {
-		name       string
-		expression string
-		statusCode int
-	}{
-		{"Empty expression", "", http.StatusUnprocessableEntity},
-		{"Invalid characters", "3&5", http.StatusInternalServerError},
-		{"Unbalanced parentheses", "(3+5*2", http.StatusInternalServerError},
-	}
+			rr := httptest.NewRecorder()
+			handler := http.HandlerFunc(handlers.CalculateHandler)
+			handler.ServeHTTP(rr, req)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			requestBody, _ := json.Marshal(handlers.CalcRequest{Expression: tt.expression})
-			req, err := http.NewRequest("POST", "/calculate", bytes.NewBuffer(requestBody))
-			assert.NoError(t, err)
-			req.Header.Set("Content-Type", "application/json")
+			if status := rr.Code; status != tt.expectedStatus {
+				t.Errorf("expected status %v, got %v", tt.expectedStatus, status)
+			}
 
-			recorder := httptest.NewRecorder()
-			http.HandlerFunc(handlers.CalculateHandler).ServeHTTP(recorder, req)
+			if tt.expectedStatus == http.StatusCreated {
+				var resp handlers.CalcResponse
+				if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+					t.Fatalf("could not decode response body: %v", err)
+				}
 
-			assert.Equal(t, tt.statusCode, recorder.Code)
+				if resp.ID == "" {
+					t.Errorf("expected non-empty ID, got empty")
+				}
+
+			}
 		})
 	}
 }

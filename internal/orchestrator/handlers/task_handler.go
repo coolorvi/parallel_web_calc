@@ -8,7 +8,7 @@ import (
 
 type Result struct {
 	ID           string  `json:"id"`
-	ExpressionID string  `json:"expressionid"`
+	ExpressionID string  `json:"expression_id"`
 	Result       float64 `json:"result"`
 }
 
@@ -28,9 +28,11 @@ func handleGetTask(w http.ResponseWriter) {
 	defer mutex.Unlock()
 
 	for id, task := range Tasks {
-		log.Printf("Sending task to agent: ID=%s, ExpressionID=%s", task.ID, task.ExpressionID)
+		log.Printf("Отправляем задачу агенту: ID=%s, ExpressionID=%s, Arg1=%f, Arg2=%f, Operation=%s",
+			task.ID, task.ExpressionID, task.Arg1, task.Arg2, task.Operation)
 
 		response := map[string]*Task{"task": task}
+
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(response); err != nil {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -53,26 +55,28 @@ func handlePostResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Received result: %+v", result)
+	log.Printf("Получен результат: %+v", result)
 
 	mutex.Lock()
-	defer mutex.Unlock()
 
 	expr, exists := Expressions[result.ExpressionID]
 	if !exists {
-		log.Printf("Error: Expression not found (ID: %s)", result.ExpressionID)
+		mutex.Unlock()
+		log.Printf("Ошибка: Expression not found (ID: %s)", result.ExpressionID)
 		http.Error(w, "Expression not found", http.StatusNotFound)
 		return
 	}
 
 	expr.TaskResults[result.ID] = result.Result
-	log.Printf("Result saved: ExpressionID=%s, TaskID=%s, Result=%f", result.ExpressionID, result.ID, result.Result)
+	log.Printf("Результат сохранён: ExpressionID=%s, TaskID=%s, Result=%f", result.ExpressionID, result.ID, result.Result)
 
 	if len(expr.TaskResults) == len(expr.Tasks) {
 		expr.Result = &result.Result
 		expr.Status = "completed"
-		log.Printf("All tasks completed. Expression status set to 'completed' (ExpressionID: %s)", result.ExpressionID)
+		log.Printf("Все задачи завершены. Статус выражения изменен на 'completed' (ExpressionID: %s)", result.ExpressionID)
 	}
+
+	mutex.Unlock()
 
 	w.WriteHeader(http.StatusOK)
 }

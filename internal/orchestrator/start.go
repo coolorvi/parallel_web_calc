@@ -4,7 +4,6 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/coolorvi/parallel_web_calc/internal/agent"
 	"github.com/coolorvi/parallel_web_calc/internal/orchestrator/handlers"
 	"github.com/gorilla/mux"
 )
@@ -18,8 +17,6 @@ func Start() {
 	r.HandleFunc("/internal/task", handlers.GetTaskHandler).Methods("GET", "POST")
 
 	log.Println("Server started on :8080")
-
-	go agent.StartWorker()
 
 	log.Fatal(http.ListenAndServe(":8080", r))
 }

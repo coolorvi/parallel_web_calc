@@ -1,153 +1,186 @@
-package main
+package agent
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
-	"math/big"
 	"net/http"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
-	"go/constant"
-	"go/token"
+	"github.com/joho/godotenv"
 )
 
-const (
-	TASK_URL        = "http://localhost/internal/task"
-	RESULT_URL      = "http://localhost/internal/task"
-	COMPUTING_POWER = 3
-)
+var TASK_URL = "http://localhost:8080/internal/task"
+var RESULT_URL = "http://localhost:8080/internal/task"
 
 type Task struct {
-	ID            string `json:"id"`
-	Arg1          string `json:"arg1"`
-	Arg2          string `json:"arg2"`
-	Operation     string `json:"operation"`
-	OperationTime int    `json:"operation_time"`
+	ID            string  `json:"id"`
+	ExpressionID  string  `json:"expression_id"`
+	Arg1          float64 `json:"arg1"`
+	Arg2          float64 `json:"arg2"`
+	Operation     string  `json:"operation"`
+	OperationTime int     `json:"operation_time"`
 }
 
 type Result struct {
-	ID     string  `json:"id"`
-	Result float64 `json:"result"`
+	ID           string  `json:"id"`
+	ExpressionID string  `json:"expression_id"`
+	Result       float64 `json:"result"`
 }
 
-func fetchTask() (*Task, error) {
-	resp, err := http.Get(TASK_URL)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+func Worker(jobs <-chan Task, results chan<- Result, wg *sync.WaitGroup) {
+	time_add, _ := strconv.Atoi(os.Getenv("TIME_ADDITION_MS"))
+	time_sub, _ := strconv.Atoi(os.Getenv("TIME_SUBTRACTION_MS"))
+	time_mul, _ := strconv.Atoi(os.Getenv("TIME_MULTPIPLICATIONS_MS"))
+	time_div, _ := strconv.Atoi(os.Getenv("TIME_DIVISION_MS"))
+	defer wg.Done()
+	for task := range jobs {
+		if task.Arg1 == 0 || task.Arg2 == 0 {
+			log.Printf("Error: one or both arguments are zero (Task ID: %s)", task.ID)
+			continue
+		}
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
+		var result float64
+		switch task.Operation {
+		case "+":
+			time.Sleep(time.Duration(time_add) * time.Millisecond)
+			result = task.Arg1 + task.Arg2
+		case "-":
+			time.Sleep(time.Duration(time_sub) * time.Millisecond)
+			result = task.Arg1 - task.Arg2
+		case "*":
+			time.Sleep(time.Duration(time_mul) * time.Millisecond)
+			result = task.Arg1 * task.Arg2
+		case "/":
+			time.Sleep(time.Duration(time_div) * time.Millisecond)
+			if task.Arg2 == 0 {
+				log.Printf("Error: division by zero (Task ID: %s)", task.ID)
+				continue
+			}
+			result = task.Arg1 / task.Arg2
+		default:
+			log.Printf("Unsupported operation: %s (Task ID: %s)", task.Operation, task.ID)
+			continue
+		}
 
-	var task struct {
-		Task Task `json:"task"`
+		results <- Result{
+			ID:           task.ID,
+			ExpressionID: task.ExpressionID,
+			Result:       result,
+		}
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&task); err != nil {
-		return nil, err
-	}
-
-	return &task.Task, nil
 }
 
-func sendResult(result Result) error {
-	data, err := json.Marshal(result)
+func SendResult(result Result) error {
+	resultJSON, err := json.Marshal(result)
 	if err != nil {
+		log.Printf("Ошибка сериализации результата: %v", err)
 		return err
 	}
 
-	resp, err := http.Post(RESULT_URL, "application/json", bytes.NewBuffer(data))
+	log.Printf("Отправка результата: %s", string(resultJSON))
+	resp, err := http.Post(RESULT_URL, "application/json", bytes.NewBuffer(resultJSON))
 	if err != nil {
+		log.Printf("Ошибка отправки результата: %v", err)
 		return err
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to send result, status code: %d", resp.StatusCode)
+		log.Printf("Сервер вернул ошибку: %d - %s", resp.StatusCode, string(body))
+		return fmt.Errorf("received non-OK status: %d", resp.StatusCode)
 	}
 
+	log.Println("Результат успешно отправлен!")
 	return nil
 }
 
-func computeTask(task *Task) (float64, error) {
-	var x, y constant.Value
-
-	x = constant.MakeFromLiteral(task.Arg1, token.FLOAT, 0)
-	y = constant.MakeFromLiteral(task.Arg2, token.FLOAT, 0)
-
-	if x.Kind() == constant.Unknown || y.Kind() == constant.Unknown {
-		return 0, fmt.Errorf("invalid operands")
-	}
-
-	var result constant.Value
-	switch task.Operation {
-	case "+":
-		result = constant.BinaryOp(x, token.ADD, y)
-	case "-":
-		result = constant.BinaryOp(x, token.SUB, y)
-	case "*":
-		result = constant.BinaryOp(x, token.MUL, y)
-	case "/":
-		if constant.Sign(y) == 0 {
-			return 0, fmt.Errorf("division by zero")
-		}
-		result = constant.BinaryOp(x, token.QUO, y)
-	default:
-		return 0, fmt.Errorf("unsupported operation: %s", task.Operation)
-	}
-
-	f, _ := new(big.Float).SetString(result.ExactString())
-	res, _ := f.Float64()
-	return res, nil
-}
-
-func worker(id int, jobs <-chan *Task, wg *sync.WaitGroup) {
-	defer wg.Done()
-	for task := range jobs {
-		fmt.Printf("Worker %d processing task %s\n", id, task.ID)
-		time.Sleep(time.Duration(task.OperationTime) * time.Millisecond)
-
-		result, err := computeTask(task)
-		if err != nil {
-			log.Printf("Worker %d failed to compute task %s: %v", id, task.ID, err)
-			continue
-		}
-
-		if err := sendResult(Result{ID: task.ID, Result: result}); err != nil {
-			log.Printf("Worker %d failed to send result for task %s: %v", id, task.ID, err)
-		}
-	}
-}
-
 func StartWorker() {
-	jobs := make(chan *Task, 100)
+	log.Println("StartWorker запущен")
+	url := "http://localhost:8080/internal/task"
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatalf("Error loading global variables")
+		return
+	}
+
 	var wg sync.WaitGroup
+	jobs := make(chan Task)
+	results := make(chan Result, 100)
 
-	for w := 1; w <= COMPUTING_POWER; w++ {
-		wg.Add(1)
-		go worker(w, jobs, &wg)
+	comp := os.Getenv("COMPUTING_POWER")
+	comp_pow, err := strconv.Atoi(comp)
+	if err != nil {
+		log.Fatalf("Error converting COMPUTING_POWER to int: %v", err)
+		return
 	}
 
-	for {
-		task, err := fetchTask()
-		if err != nil {
-			log.Printf("Error fetching task: %v", err)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		if task == nil {
-			log.Println("No tasks available, retrying...")
-			time.Sleep(2 * time.Second)
-			continue
-		}
+	go func() {
+		for {
+			resp, err := http.Get(url)
+			if err != nil {
+				log.Printf("Ошибка запроса задач: %v", err)
+				time.Sleep(10 * time.Second)
+				continue
+			}
 
-		jobs <- task
-	}
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				log.Printf("Ошибка чтения ответа: %v", err)
+				time.Sleep(10 * time.Second)
+				continue
+			}
+
+			log.Printf("Ответ от сервера перед разбором JSON: %s", string(body))
+
+			var data struct {
+				Task Task `json:"task"`
+			}
+			if err := json.Unmarshal(body, &data); err != nil {
+				log.Printf("Ошибка разбора JSON: %v. Ответ сервера: %s", err, string(body))
+				time.Sleep(10 * time.Second)
+				continue
+			}
+
+			task := data.Task
+
+			if task.ID == "" {
+				log.Println("Нет доступных задач.")
+				time.Sleep(10 * time.Second)
+				continue
+			}
+
+			log.Printf("Получена задача: %+v", task)
+			jobs <- task
+		}
+	}()
+
+	go func() {
+		for w := 1; w <= comp_pow; w++ {
+			wg.Add(1)
+			go Worker(jobs, results, &wg)
+		}
+	}()
+
+	go func() {
+		wg.Wait()
+		close(jobs)
+		close(results)
+	}()
+
+	go func() {
+		for result := range results {
+			err := SendResult(result)
+			if err != nil {
+				log.Printf("Failed to send result: %v", err)
+			}
+		}
+	}()
 }
