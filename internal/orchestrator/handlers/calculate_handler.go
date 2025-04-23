@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/coolorvi/parallel_web_calc/internal/storage"
 	"github.com/google/uuid"
 )
 
@@ -69,6 +70,16 @@ func CalculateHandler(w http.ResponseWriter, r *http.Request) {
 		Status:      "in_progress",
 		Tasks:       []string{},
 		TaskResults: make(map[string]float64),
+	}
+
+	_, err = storage.DB.Exec(`
+    INSERT INTO expressions (id, user_id, expression, result)
+    VALUES (?, ?, ?, ?)`,
+		expressionID, 1, expr, "",
+	)
+	if err != nil {
+		http.Error(w, "Failed to save expression to DB", http.StatusInternalServerError)
+		return
 	}
 
 	mutex.Lock()
