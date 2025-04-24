@@ -16,10 +16,16 @@ import (
 func main() {
 	dbPath := "./db.sqlite"
 
-	applyMigrations("./db.sqlite", "./migrations/init.sql")
+	applyMigrations(dbPath, "internal/migrations/init.sql")
+
+	_, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		log.Fatalf("Failed to open database: %v", err)
+	}
+
+	storage.InitDB(dbPath)
 
 	go agent.StartWorker()
-	storage.InitDB(dbPath)
 	orchestrator.Start()
 }
 

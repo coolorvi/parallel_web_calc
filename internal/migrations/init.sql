@@ -5,10 +5,10 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS expressions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT PRIMARY KEY,                  
     user_id INTEGER NOT NULL,
     expression TEXT NOT NULL,
-    result TEXT NOT NULL,
+    result TEXT,                          
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id)
 );
