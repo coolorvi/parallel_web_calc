@@ -7,31 +7,15 @@ import (
 	"github.com/gorilla/mux"
 )
 
-func ExpressionHandler(w http.ResponseWriter, r *http.Request) {
-	mutex.Lock()
-	defer mutex.Unlock()
+func (o *Orchestrator) GetExpression(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	o.mu.Lock()
+	defer o.mu.Unlock()
 
-	vars := mux.Vars(r)
-	id := vars["id"]
-
-	expr, exists := Expressions[id]
-	if !exists || expr == nil {
-		http.Error(w, "Not Found", http.StatusNotFound)
+	expr, ok := o.expressions[id]
+	if !ok {
+		http.Error(w, "Expression not found", http.StatusNotFound)
 		return
 	}
-
-	response := map[string]interface{}{
-		"id":     expr.ID,
-		"status": expr.Status,
-	}
-
-	if expr.Result != nil {
-		response["result"] = *expr.Result
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"expression": response,
-	})
+	json.NewEncoder(w).Encode(map[string]*Expression{"expression": expr})
 }

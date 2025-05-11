@@ -22,3 +22,8 @@ require (
 	github.com/stretchr/objx v0.5.2
 	golang.org/x/crypto v0.37.0
 )
+
+require (
+	github.com/DATA-DOG/go-sqlmock v1.5.2
+	github.com/Knetic/govaluate v3.0.0+incompatible // indirect
+)

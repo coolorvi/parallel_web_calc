@@ -5,27 +5,15 @@ import (
 	"net/http"
 )
 
-func ExpressionsHandler(w http.ResponseWriter, r *http.Request) {
-	mutex.Lock()
-	defer mutex.Unlock()
+func (o *Orchestrator) GetExpressions(w http.ResponseWriter, r *http.Request) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
 
-	var expressionsList []map[string]interface{}
-	for _, expr := range Expressions {
-		exprData := map[string]interface{}{
-			"id":     expr.ID,
-			"status": expr.Status,
-		}
-
-		if expr.Result != nil {
-			exprData["result"] = *expr.Result
-		}
-
-		expressionsList = append(expressionsList, exprData)
+	resp := struct {
+		Expressions []*Expression `json:"expressions"`
+	}{Expressions: make([]*Expression, 0, len(o.expressions))}
+	for _, expr := range o.expressions {
+		resp.Expressions = append(resp.Expressions, expr)
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"expressions": expressionsList,
-	})
+	json.NewEncoder(w).Encode(resp)
 }

@@ -1,119 +1,113 @@
-package handler
+package auth
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
-	"strings"
+	"os"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
-type contextKey string
+var JwtKey = []byte(os.Getenv("JWT_SECRET"))
 
-const userIDKey contextKey = "user_id"
-
-type User struct {
-	ID           int    `db:"id"`
-	Login        string `db:"login"`
-	PasswordHash string `db:"password_hash"`
+type Credentials struct {
+	Login    string `json:"login"`
+	Password string `json:"password"`
 }
 
-type Server struct {
-	DB *sql.DB
+type Claims struct {
+	UserID int `json:"user_id"`
+	jwt.RegisteredClaims
 }
 
-var jwtSecret = []byte("secret_key")
-
-func (s *Server) RegisterHandler(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Login    string `json:"login"`
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
-		return
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		http.Error(w, "Server error", http.StatusInternalServerError)
-		return
-	}
-
-	_, err = s.DB.Exec("INSERT INTO users (login, password_hash) VALUES (?, ?)", req.Login, string(hash))
-	if err != nil {
-		http.Error(w, "Login already exists", http.StatusBadRequest)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
+func writeJSONError(w http.ResponseWriter, status int, message string) {
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
-func (s *Server) LoginHandler(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Login    string `json:"login"`
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
-		return
-	}
-
-	var user User
-	row := s.DB.QueryRow("SELECT id, login, password_hash FROM users WHERE login = ?", req.Login)
-	err := row.Scan(&user.ID, &user.Login, &user.PasswordHash)
-	if err != nil {
-		http.Error(w, "Invalid login", http.StatusUnauthorized)
-		return
-	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
-		http.Error(w, "Invalid password", http.StatusUnauthorized)
-		return
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": user.ID,
-		"exp":     time.Now().Add(24 * time.Hour).Unix(),
-	})
-	tokenString, err := token.SignedString(jwtSecret)
-	if err != nil {
-		http.Error(w, "Could not generate token", http.StatusInternalServerError)
-		return
-	}
-
-	json.NewEncoder(w).Encode(map[string]string{"token": tokenString})
-}
-
-func (s *Server) AuthMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		header := r.Header.Get("Authorization")
-		if header == "" || !strings.HasPrefix(header, "Bearer ") {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+func Register(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var creds Credentials
+		if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "Invalid input")
 			return
 		}
 
-		tokenStr := strings.TrimPrefix(header, "Bearer ")
-		token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
-			return jwtSecret, nil
-		})
-
-		if err != nil || !token.Valid {
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
+		hash, err := bcrypt.GenerateFromPassword([]byte(creds.Password), bcrypt.DefaultCost)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "Server error")
 			return
 		}
 
-		claims := token.Claims.(jwt.MapClaims)
-		userID := int(claims["user_id"].(float64))
-		ctx := context.WithValue(r.Context(), userIDKey, userID)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
+		_, err = db.Exec("INSERT INTO users (login, password_hash) VALUES (?, ?)", creds.Login, string(hash))
+		if err != nil {
+			writeJSONError(w, http.StatusConflict, "User already exists")
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "registered"})
+	}
+}
+
+func Login(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var creds Credentials
+		if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "Invalid input")
+			return
+		}
+
+		var id int
+		var hashed string
+		err := db.QueryRow("SELECT id, password_hash FROM users WHERE login = ?", creds.Login).Scan(&id, &hashed)
+		if err != nil {
+			writeJSONError(w, http.StatusUnauthorized, "Invalid login or password")
+			return
+		}
+
+		if bcrypt.CompareHashAndPassword([]byte(hashed), []byte(creds.Password)) != nil {
+			writeJSONError(w, http.StatusUnauthorized, "Invalid login or password")
+			return
+		}
+
+		exp := time.Now().Add(24 * time.Hour)
+		claims := &Claims{
+			UserID: id,
+			RegisteredClaims: jwt.RegisteredClaims{
+				ExpiresAt: jwt.NewNumericDate(exp),
+			},
+		}
+
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		tokenStr, err := token.SignedString(JwtKey)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "Could not create token")
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"token": tokenStr})
+	}
 }
 
 func GetUserID(r *http.Request) int {
-	return r.Context().Value(userIDKey).(int)
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		return 0
+	}
+
+	tokenStr := authHeader[len("Bearer "):]
+	claims := &Claims{}
+	token, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
+		return JwtKey, nil
+	})
+
+	if err != nil || !token.Valid {
+		return 0
+	}
+	return claims.UserID
 }

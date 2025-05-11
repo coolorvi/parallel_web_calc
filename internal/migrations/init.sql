@@ -5,10 +5,10 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS expressions (
-    id TEXT PRIMARY KEY,                  
+    id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
     expression TEXT NOT NULL,
-    result TEXT,                          
+    result REAL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id)
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );

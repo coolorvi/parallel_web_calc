@@ -1,99 +1,123 @@
 package tests
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 
 	"github.com/coolorvi/parallel_web_calc/internal/agent"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 )
 
-type MockHttpClient struct {
-	mock.Mock
-}
-
-func (m *MockHttpClient) Do(req *http.Request) (*http.Response, error) {
-	args := m.Called(req)
-	return args.Get(0).(*http.Response), args.Error(1)
-}
-
-func TestWorker_SimpleCalculation(t *testing.T) {
+func TestCompute_Addition(t *testing.T) {
 	task := agent.Task{
-		ID:           "1",
-		ExpressionID: "exp_1",
-		Arg1:         5,
-		Arg2:         3,
-		Operation:    "+",
+		Arg1:          5,
+		Arg2:          3,
+		Operation:     "+",
+		OperationTime: 0,
 	}
-
-	var wg sync.WaitGroup
-	jobs := make(chan agent.Task)
-	results := make(chan agent.Result, 1)
-
-	wg.Add(1)
-	go agent.Worker(jobs, results, &wg)
-
-	jobs <- task
-	close(jobs)
-
-	wg.Wait()
-
-	result := <-results
-	assert.Equal(t, result.ID, "1")
-	assert.Equal(t, result.Result, 8.0)
+	result := agent.Compute(task)
+	assert.Equal(t, 8.0, result, "Expected result is 8")
 }
 
-func TestSendResult_Success(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/internal/task", func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, r.Method, http.MethodPost)
-
-		var result agent.Result
-		err := json.NewDecoder(r.Body).Decode(&result)
-		assert.NoError(t, err)
-		assert.Equal(t, result.ID, "1")
-		assert.Equal(t, result.Result, 8.0)
-
-		w.WriteHeader(http.StatusOK)
-	})
-
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	agent.RESULT_URL = server.URL + "/internal/task"
-
-	result := agent.Result{
-		ID:           "1",
-		ExpressionID: "exp_1",
-		Result:       8.0,
+func TestCompute_Subtraction(t *testing.T) {
+	task := agent.Task{
+		Arg1:          5,
+		Arg2:          3,
+		Operation:     "-",
+		OperationTime: 0,
 	}
-
-	err := agent.SendResult(result)
-	assert.NoError(t, err)
+	result := agent.Compute(task)
+	assert.Equal(t, 2.0, result, "Expected result is 2")
 }
 
-func TestSendResult_Failure(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc(agent.RESULT_URL, func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	})
+func TestCompute_Multiplication(t *testing.T) {
+	task := agent.Task{
+		Arg1:          5,
+		Arg2:          3,
+		Operation:     "*",
+		OperationTime: 0,
+	}
+	result := agent.Compute(task)
+	assert.Equal(t, 15.0, result, "Expected result is 15")
+}
 
-	server := httptest.NewServer(mux)
-	defer server.Close()
+func TestCompute_Division(t *testing.T) {
+	task := agent.Task{
+		Arg1:          6,
+		Arg2:          2,
+		Operation:     "/",
+		OperationTime: 0,
+	}
+	result := agent.Compute(task)
+	assert.Equal(t, 3.0, result, "Expected result is 3")
+}
 
-	agent.RESULT_URL = server.URL
+func TestCompute_DivideByZero(t *testing.T) {
+	task := agent.Task{
+		Arg1:          1,
+		Arg2:          0,
+		Operation:     "/",
+		OperationTime: 0,
+	}
+	result := agent.Compute(task)
+	assert.Equal(t, 0.0, result, "Expected result is 0 when dividing by zero")
+}
 
-	result := agent.Result{
-		ID:           "1",
-		ExpressionID: "exp_1",
-		Result:       8.0,
+func TestAgent_Worker(t *testing.T) {
+	task := agent.Task{
+		ID:        1,
+		Arg1:      3,
+		Arg2:      2,
+		Operation: "+",
 	}
 
-	err := agent.SendResult(result)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "received non-OK status")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && r.URL.Path == "/internal/task" {
+			resp := struct {
+				Task agent.Task `json:"task"`
+			}{
+				Task: task,
+			}
+			json.NewEncoder(w).Encode(resp)
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/internal/task" {
+			var requestData map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&requestData)
+			assert.Equal(t, 1.0, requestData["id"])
+			assert.Equal(t, 5.0, requestData["result"])
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+
+	defer server.Close()
+
+	client := &http.Client{}
+	resp, err := client.Get(server.URL + "/internal/task")
+	assert.Nil(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var taskResponse struct {
+		Task agent.Task `json:"task"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&taskResponse)
+	assert.Nil(t, err)
+
+	result := agent.Compute(taskResponse.Task)
+
+	resultData := map[string]interface{}{
+		"id":     taskResponse.Task.ID,
+		"result": result,
+	}
+	reqBody, err := json.Marshal(resultData)
+	assert.Nil(t, err)
+
+	resp, err = client.Post(server.URL+"/internal/task", "application/json", bytes.NewBuffer(reqBody))
+	assert.Nil(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
